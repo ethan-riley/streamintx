@@ -60,26 +60,25 @@ authInternalUsers:
   # Default unprivileged user.
   # Username. 'any' means any user, including anonymous ones.
 - user: any
-  # Password. Not used in case of 'any' user.
   pass:
-  # IPs or networks allowed to use this user. An empty list means any IP.
   ips: []
-  # List of permissions.
   permissions:
-    # Available actions are: publish, read, playback, api, metrics, pprof.
   - action: publish
-    # Paths can be set to further restrict access to a specific path.
-    # An empty path means any path.
-    # Regular expressions can be used by using a tilde as prefix.
     path:
   - action: read
     path:
   - action: playback
     path:
 
-  # Default administrator.
-  # This allows to use API, metrics and PPROF without authentication,
-  # if the IP is localhost.
+- user: c4user
+  pass: Piscola35
+  ips: []
+  permissions:
+    - action: publish
+      path: ~^C4
+    - action: read
+      path: ~^C4
+
 - user: any
   pass:
   ips: ['127.0.0.1', '::1']
@@ -148,7 +147,7 @@ authJWTInHTTPQuery: true
 # Global settings -> Control API
 
 # Enable controlling the server through the Control API.
-api: no
+api: yes
 # Address of the Control API listener.
 apiAddress: :9997
 # Enable TLS/HTTPS on the Control API server.
@@ -239,6 +238,17 @@ playbackAllowOrigins: ['*']
 # If the server receives a request from one of these entries, IP in logs
 # will be taken from the X-Forwarded-For header.
 playbackTrustedProxies: []
+
+###############################################
+# Global settings -> Staging database
+
+# Enable the staging database to log all stream information.
+# The database stores path and connection data for the configured retention period.
+stagingDB: yes
+# Path to the SQLite database file.
+stagingDBPath: streamintx_staging.db
+# How long to retain data in the staging database (default: 72 hours).
+stagingDBRetentionPeriod: 72h
 
 ###############################################
 # Global settings -> RTSP server
@@ -757,6 +767,8 @@ paths:
   # example:
   # my_camera:
   #   source: rtsp://my_camera
+  ~^C4:
+    overridePublisher: yes
 
   # Settings under path "all_others" are applied to all paths that
   # do not match another entry.

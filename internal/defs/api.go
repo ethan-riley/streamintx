@@ -403,3 +403,61 @@ type APIRecordingList struct {
 	PageCount int             `json:"pageCount"`
 	Items     []*APIRecording `json:"items"`
 }
+
+// APIStagingPath is a path record from the staging database.
+type APIStagingPath struct {
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	ConfName      string     `json:"confName"`
+	SourceType    string     `json:"sourceType"`
+	SourceID      string     `json:"sourceId"`
+	Ready         bool       `json:"ready"`
+	ReadyTime     *time.Time `json:"readyTime"`
+	ClosedTime    *time.Time `json:"closedTime"`
+	State         string     `json:"state"` // streaming, published, idle, timeout
+	Tracks        []string   `json:"tracks"`
+	BytesReceived uint64     `json:"bytesReceived"`
+	BytesSent     uint64     `json:"bytesSent"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+// APIStagingPathList is a list of staging path records.
+type APIStagingPathList struct {
+	ItemCount int               `json:"itemCount"`
+	PageCount int               `json:"pageCount"`
+	Items     []*APIStagingPath `json:"items"`
+}
+
+// APIStagingConnection is a connection record from the staging database.
+type APIStagingConnection struct {
+	ID            int64      `json:"id"`
+	ConnID        uuid.UUID  `json:"connId"`
+	ConnType      string     `json:"connType"`
+	Created       time.Time  `json:"created"`
+	ClosedTime    *time.Time `json:"closedTime"`
+	RemoteAddr    string     `json:"remoteAddr"`
+	State         string     `json:"state"`
+	Path          string     `json:"path"`
+	Query         string     `json:"query"`
+	User          string     `json:"user"`
+	BytesReceived uint64     `json:"bytesReceived"`
+	BytesSent     uint64     `json:"bytesSent"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+// APIStagingConnectionList is a list of staging connection records.
+type APIStagingConnectionList struct {
+	ItemCount int                     `json:"itemCount"`
+	PageCount int                     `json:"pageCount"`
+	Items     []*APIStagingConnection `json:"items"`
+}
+
+// APIStagingStats contains statistics about the staging database.
+type APIStagingStats struct {
+	TotalPaths         int64 `json:"totalPaths"`
+	ActivePaths        int64 `json:"activePaths"`
+	TotalConnections   int64 `json:"totalConnections"`
+	ActiveConnections  int64 `json:"activeConnections"`
+}

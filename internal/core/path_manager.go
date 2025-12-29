@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/bluenviron/mediamtx/internal/auth"
 	"github.com/bluenviron/mediamtx/internal/conf"
@@ -13,6 +14,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
 	"github.com/bluenviron/mediamtx/internal/servers/hls"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 	"github.com/bluenviron/mediamtx/internal/stream"
 )
 
@@ -59,10 +61,17 @@ type pathSetHLSServerReq struct {
 	res chan pathSetHLSServerRes
 }
 
+type pathNotReadyReq struct {
+	pa            *path
+	bytesReceived uint64
+	bytesSent     uint64
+}
+
 type pathData struct {
-	path     *path
-	ready    bool
-	confName string
+	path            *path
+	ready           bool
+	confName        string
+	stagingDBPathID int64 // ID in the staging database for tracking
 }
 
 type pathManagerParent interface {
@@ -81,6 +90,7 @@ type pathManager struct {
 	pathConfs         map[string]*conf.Path
 	externalCmdPool   *externalcmd.Pool
 	metrics           *metrics.Metrics
+	stagingDB         *stagingdb.StagingDB
 	parent            pathManagerParent
 
 	ctx       context.Context
@@ -94,7 +104,7 @@ type pathManager struct {
 	chSetHLSServer chan pathSetHLSServerReq
 	chClosePath    chan *path
 	chPathReady    chan *path
-	chPathNotReady chan *path
+	chPathNotReady chan pathNotReadyReq
 	chFindPathConf chan defs.PathFindPathConfReq
 	chDescribe     chan defs.PathDescribeReq
 	chAddReader    chan defs.PathAddReaderReq
@@ -113,7 +123,7 @@ func (pm *pathManager) initialize() {
 	pm.chSetHLSServer = make(chan pathSetHLSServerReq)
 	pm.chClosePath = make(chan *path)
 	pm.chPathReady = make(chan *path)
-	pm.chPathNotReady = make(chan *path)
+	pm.chPathNotReady = make(chan pathNotReadyReq)
 	pm.chFindPathConf = make(chan defs.PathFindPathConfReq)
 	pm.chDescribe = make(chan defs.PathDescribeReq)
 	pm.chAddReader = make(chan defs.PathAddReaderReq)
@@ -172,8 +182,8 @@ outer:
 		case pa := <-pm.chPathReady:
 			pm.doPathReady(pa)
 
-		case pa := <-pm.chPathNotReady:
-			pm.doPathNotReady(pa)
+		case req := <-pm.chPathNotReady:
+			pm.doPathNotReady(req)
 
 		case req := <-pm.chFindPathConf:
 			pm.doFindPathConf(req)
@@ -294,20 +304,49 @@ func (pm *pathManager) doClosePath(pa *path) {
 }
 
 func (pm *pathManager) doPathReady(pa *path) {
-	if pd, ok := pm.paths[pa.name]; !ok || pd.path != pa {
+	pd, ok := pm.paths[pa.name]
+	if !ok || pd.path != pa {
 		return
 	}
 
 	pm.paths[pa.name].ready = true
+
+	// Record path ready event in staging database
+	if pm.stagingDB != nil && pa.source != nil {
+		sourceDesc := pa.source.APISourceDescribe()
+		tracks := []string{}
+		if pa.stream != nil && pa.stream.Desc != nil {
+			tracks = defs.MediasToCodecs(pa.stream.Desc.Medias)
+		}
+		id, err := pm.stagingDB.RecordPathReady(
+			pa.name,
+			pa.conf.Name,
+			sourceDesc.Type,
+			sourceDesc.ID,
+			pa.readyTime,
+			tracks,
+		)
+		if err == nil {
+			pm.paths[pa.name].stagingDBPathID = id
+		}
+	}
 
 	if pm.hlsServer != nil {
 		pm.hlsServer.PathReady(pa)
 	}
 }
 
-func (pm *pathManager) doPathNotReady(pa *path) {
-	if pd, ok := pm.paths[pa.name]; !ok || pd.path != pa {
+func (pm *pathManager) doPathNotReady(req pathNotReadyReq) {
+	pa := req.pa
+	pd, ok := pm.paths[pa.name]
+	if !ok || pd.path != pa {
 		return
+	}
+
+	// Record path closed event in staging database using pre-captured stats
+	if pm.stagingDB != nil && pd.stagingDBPathID > 0 {
+		pm.stagingDB.RecordPathClosed(pd.stagingDBPathID, time.Now(), req.bytesReceived, req.bytesSent)
+		pm.paths[pa.name].stagingDBPathID = 0
 	}
 
 	pm.paths[pa.name].ready = false
@@ -479,9 +518,9 @@ func (pm *pathManager) pathReady(pa *path) {
 }
 
 // pathNotReady is called by path.
-func (pm *pathManager) pathNotReady(pa *path) {
+func (pm *pathManager) pathNotReady(pa *path, bytesReceived, bytesSent uint64) {
 	select {
-	case pm.chPathNotReady <- pa:
+	case pm.chPathNotReady <- pathNotReadyReq{pa: pa, bytesReceived: bytesReceived, bytesSent: bytesSent}:
 	case <-pm.ctx.Done():
 	case <-pa.ctx.Done(): // in case pathManager is blocked by path.wait()
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/hooks"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/protocols/rtmp"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 	"github.com/bluenviron/mediamtx/internal/stream"
 )
 
@@ -36,17 +37,19 @@ type conn struct {
 	nconn               net.Conn
 	externalCmdPool     *externalcmd.Pool
 	pathManager         serverPathManager
+	stagingDB           *stagingdb.StagingDB
 	parent              *Server
 
-	ctx       context.Context
-	ctxCancel func()
-	uuid      uuid.UUID
-	created   time.Time
-	mutex     sync.RWMutex
-	rconn     *gortmplib.ServerConn
-	state     defs.APIRTMPConnState
-	pathName  string
-	query     string
+	ctx             context.Context
+	ctxCancel       func()
+	uuid            uuid.UUID
+	created         time.Time
+	mutex           sync.RWMutex
+	rconn           *gortmplib.ServerConn
+	state           defs.APIRTMPConnState
+	pathName        string
+	query           string
+	stagingDBConnID int64 // ID in the staging database for tracking
 }
 
 func (c *conn) initialize() {
@@ -55,6 +58,18 @@ func (c *conn) initialize() {
 	c.uuid = uuid.New()
 	c.created = time.Now()
 	c.state = defs.APIRTMPConnStateIdle
+
+	// Record connection opened in staging database
+	if c.stagingDB != nil {
+		connType := "rtmp"
+		if c.isTLS {
+			connType = "rtmps"
+		}
+		id, err := c.stagingDB.RecordConnectionOpened(c.uuid, connType, c.created, c.remoteAddr().String())
+		if err == nil {
+			c.stagingDBConnID = id
+		}
+	}
 
 	c.Log(logger.Info, "opened")
 
@@ -96,6 +111,17 @@ func (c *conn) run() { //nolint:dupl
 	err := c.runInner()
 
 	c.ctxCancel()
+
+	// Record connection closed in staging database
+	if c.stagingDB != nil && c.stagingDBConnID > 0 {
+		bytesReceived := uint64(0)
+		bytesSent := uint64(0)
+		if c.rconn != nil {
+			bytesReceived = c.rconn.BytesReceived()
+			bytesSent = c.rconn.BytesSent()
+		}
+		c.stagingDB.RecordConnectionClosed(c.stagingDBConnID, time.Now(), bytesReceived, bytesSent)
+	}
 
 	c.parent.closeConn(c)
 
@@ -182,6 +208,19 @@ func (c *conn) runRead() error {
 	c.pathName = pathName
 	c.query = c.rconn.URL.RawQuery
 	c.mutex.Unlock()
+
+	// Record state change in staging database
+	if c.stagingDB != nil && c.stagingDBConnID > 0 {
+		// Extract user from query params or URL userinfo
+		user := query.Get("user")
+		if user == "" && c.rconn.URL.User != nil {
+			user = c.rconn.URL.User.Username()
+		}
+		// Debug: log what URL info we received
+		c.Log(logger.Debug, "staging: URL=%s, User=%v, Query=%s, ExtractedUser=%s",
+			c.rconn.URL.String(), c.rconn.URL.User, c.rconn.URL.RawQuery, user)
+		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStateRead), pathName, c.rconn.URL.RawQuery, user)
+	}
 
 	r := &stream.Reader{Parent: c}
 
@@ -272,6 +311,19 @@ func (c *conn) runPublish() error {
 	c.pathName = pathName
 	c.query = c.rconn.URL.RawQuery
 	c.mutex.Unlock()
+
+	// Record state change in staging database
+	if c.stagingDB != nil && c.stagingDBConnID > 0 {
+		// Extract user from query params or URL userinfo
+		user := query.Get("user")
+		if user == "" && c.rconn.URL.User != nil {
+			user = c.rconn.URL.User.Username()
+		}
+		// Debug: log what URL info we received
+		c.Log(logger.Debug, "staging: URL=%s, User=%v, Query=%s, ExtractedUser=%s",
+			c.rconn.URL.String(), c.rconn.URL.User, c.rconn.URL.RawQuery, user)
+		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStatePublish), pathName, c.rconn.URL.RawQuery, user)
+	}
 
 	c.nconn.SetWriteDeadline(time.Time{})
 

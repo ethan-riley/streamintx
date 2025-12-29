@@ -29,7 +29,7 @@ func emptyTimer() *time.Timer {
 type pathParent interface {
 	logger.Writer
 	pathReady(*path)
-	pathNotReady(*path)
+	pathNotReady(*path, uint64, uint64) // path, bytesReceived, bytesSent
 	closePath(*path)
 	AddReader(req defs.PathAddReaderReq) (defs.Path, *stream.Stream, error)
 }
@@ -735,7 +735,15 @@ func (pa *path) consumeOnHoldRequests() {
 }
 
 func (pa *path) setNotReady() {
-	pa.parent.pathNotReady(pa)
+	// Capture stats before closing the stream to avoid race condition
+	bytesReceived := uint64(0)
+	bytesSent := uint64(0)
+	if pa.stream != nil {
+		bytesReceived = pa.stream.BytesReceived()
+		bytesSent = pa.stream.BytesSent()
+	}
+
+	pa.parent.pathNotReady(pa, bytesReceived, bytesSent)
 
 	for r := range pa.readers {
 		pa.executeRemoveReader(r)
