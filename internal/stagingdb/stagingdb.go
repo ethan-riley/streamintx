@@ -16,6 +16,18 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 )
 
+// Connection/Path states
+const (
+	// StateIdle - connection opened but not yet publishing/reading (onDemand waiting)
+	StateIdle = "idle"
+	// StateStreaming - actively transmitting (no closedTime)
+	StateStreaming = "streaming"
+	// StatePublished - completed normally by client (has closedTime)
+	StatePublished = "published"
+	// StateTimeout - connection lost unexpectedly (crash/disconnect)
+	StateTimeout = "timeout"
+)
+
 // PathRecord represents a recorded path/stream event
 type PathRecord struct {
 	ID            int64      `json:"id"`
@@ -26,6 +38,7 @@ type PathRecord struct {
 	Ready         bool       `json:"ready"`
 	ReadyTime     *time.Time `json:"readyTime"`
 	ClosedTime    *time.Time `json:"closedTime"`
+	State         string     `json:"state"` // streaming, published, idle, timeout
 	Tracks        []string   `json:"tracks"`
 	BytesReceived uint64     `json:"bytesReceived"`
 	BytesSent     uint64     `json:"bytesSent"`
@@ -91,6 +104,9 @@ func (s *StagingDB) Initialize() error {
 		return err
 	}
 
+	// Recover stale connections/paths from previous crash
+	s.recoverStaleRecords()
+
 	s.Log(logger.Info, "staging database initialized at %s (retention: %v)", s.DBPath, s.RetentionPeriod)
 
 	// Start cleanup routine
@@ -127,6 +143,7 @@ func (s *StagingDB) createTables() error {
 			ready BOOLEAN DEFAULT FALSE,
 			ready_time DATETIME,
 			closed_time DATETIME,
+			state TEXT DEFAULT 'idle',
 			tracks TEXT,
 			bytes_received INTEGER DEFAULT 0,
 			bytes_sent INTEGER DEFAULT 0,
@@ -161,8 +178,9 @@ func (s *StagingDB) createTables() error {
 		return err
 	}
 
-	// Add user column if it doesn't exist (for existing databases)
+	// Add columns if they don't exist (for existing databases)
 	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN user TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE paths ADD COLUMN state TEXT DEFAULT 'idle'`)
 
 	// Create indexes for faster queries
 	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_paths_name ON paths(name)`)
@@ -201,35 +219,35 @@ func (s *StagingDB) RecordPathReady(name, confName, sourceType, sourceID string,
 	tracksJSON, _ := json.Marshal(tracks)
 
 	result, err := s.db.Exec(`
-		INSERT INTO paths (name, conf_name, source_type, source_id, ready, ready_time, tracks, created_at, updated_at)
-		VALUES (?, ?, ?, ?, TRUE, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, name, confName, sourceType, sourceID, readyTime, string(tracksJSON))
+		INSERT INTO paths (name, conf_name, source_type, source_id, ready, ready_time, state, tracks, created_at, updated_at)
+		VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, name, confName, sourceType, sourceID, readyTime, StateStreaming, string(tracksJSON))
 	if err != nil {
 		s.Log(logger.Error, "failed to record path ready: %v", err)
 		return 0, err
 	}
 
 	id, _ := result.LastInsertId()
-	s.Log(logger.Debug, "recorded path ready: %s (id=%d)", name, id)
+	s.Log(logger.Debug, "recorded path ready: %s (id=%d, state=%s)", name, id, StateStreaming)
 	return id, nil
 }
 
-// RecordPathClosed records when a path is closed (stream ends)
+// RecordPathClosed records when a path is closed (stream ends normally)
 func (s *StagingDB) RecordPathClosed(id int64, closedTime time.Time, bytesReceived, bytesSent uint64) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	_, err := s.db.Exec(`
 		UPDATE paths
-		SET ready = FALSE, closed_time = ?, bytes_received = ?, bytes_sent = ?, updated_at = CURRENT_TIMESTAMP
+		SET ready = FALSE, closed_time = ?, state = ?, bytes_received = ?, bytes_sent = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, closedTime, bytesReceived, bytesSent, id)
+	`, closedTime, StatePublished, bytesReceived, bytesSent, id)
 	if err != nil {
 		s.Log(logger.Error, "failed to record path closed: %v", err)
 		return err
 	}
 
-	s.Log(logger.Debug, "recorded path closed: id=%d", id)
+	s.Log(logger.Debug, "recorded path closed: id=%d (state=%s)", id, StatePublished)
 	return nil
 }
 
@@ -266,40 +284,48 @@ func (s *StagingDB) RecordConnectionOpened(connID uuid.UUID, connType string, cr
 }
 
 // RecordConnectionStateChange records when a connection changes state
+// When a connection starts publishing or reading, it transitions to "streaming" state
 func (s *StagingDB) RecordConnectionStateChange(id int64, state, pathName, query, user string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
+	// Map legacy states to new states
+	// publish/read -> streaming (active transmission)
+	mappedState := state
+	if state == "publish" || state == "read" {
+		mappedState = StateStreaming
+	}
 
 	_, err := s.db.Exec(`
 		UPDATE connections
 		SET state = ?, path_name = ?, query = ?, user = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, state, pathName, query, user, id)
+	`, mappedState, pathName, query, user, id)
 	if err != nil {
 		s.Log(logger.Error, "failed to record connection state change: %v", err)
 		return err
 	}
 
-	s.Log(logger.Debug, "recorded connection state change: id=%d, state=%s, path=%s, user=%s", id, state, pathName, user)
+	s.Log(logger.Debug, "recorded connection state change: id=%d, state=%s, path=%s, user=%s", id, mappedState, pathName, user)
 	return nil
 }
 
-// RecordConnectionClosed records when a connection is closed
+// RecordConnectionClosed records when a connection is closed normally
 func (s *StagingDB) RecordConnectionClosed(id int64, closedTime time.Time, bytesReceived, bytesSent uint64) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	_, err := s.db.Exec(`
 		UPDATE connections
-		SET closed_time = ?, bytes_received = ?, bytes_sent = ?, updated_at = CURRENT_TIMESTAMP
+		SET closed_time = ?, state = ?, bytes_received = ?, bytes_sent = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, closedTime, bytesReceived, bytesSent, id)
+	`, closedTime, StatePublished, bytesReceived, bytesSent, id)
 	if err != nil {
 		s.Log(logger.Error, "failed to record connection closed: %v", err)
 		return err
 	}
 
-	s.Log(logger.Debug, "recorded connection closed: id=%d", id)
+	s.Log(logger.Debug, "recorded connection closed: id=%d (state=%s)", id, StatePublished)
 	return nil
 }
 
@@ -310,7 +336,7 @@ func (s *StagingDB) GetRecentPaths(hours int) ([]PathRecord, error) {
 
 	rows, err := s.db.Query(`
 		SELECT id, name, conf_name, source_type, source_id, ready, ready_time, closed_time,
-		       tracks, bytes_received, bytes_sent, created_at, updated_at
+		       state, tracks, bytes_received, bytes_sent, created_at, updated_at
 		FROM paths
 		WHERE created_at >= datetime('now', ?)
 		ORDER BY created_at DESC
@@ -325,10 +351,10 @@ func (s *StagingDB) GetRecentPaths(hours int) ([]PathRecord, error) {
 		var r PathRecord
 		var tracksJSON string
 		var readyTime, closedTime sql.NullTime
-		var sourceType, sourceID sql.NullString
+		var sourceType, sourceID, state sql.NullString
 
 		err := rows.Scan(&r.ID, &r.Name, &r.ConfName, &sourceType, &sourceID,
-			&r.Ready, &readyTime, &closedTime, &tracksJSON,
+			&r.Ready, &readyTime, &closedTime, &state, &tracksJSON,
 			&r.BytesReceived, &r.BytesSent, &r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			continue
@@ -345,6 +371,9 @@ func (s *StagingDB) GetRecentPaths(hours int) ([]PathRecord, error) {
 		}
 		if closedTime.Valid {
 			r.ClosedTime = &closedTime.Time
+		}
+		if state.Valid {
+			r.State = state.String
 		}
 		json.Unmarshal([]byte(tracksJSON), &r.Tracks)
 
@@ -412,7 +441,7 @@ func (s *StagingDB) GetPathsByName(name string) ([]PathRecord, error) {
 
 	rows, err := s.db.Query(`
 		SELECT id, name, conf_name, source_type, source_id, ready, ready_time, closed_time,
-		       tracks, bytes_received, bytes_sent, created_at, updated_at
+		       state, tracks, bytes_received, bytes_sent, created_at, updated_at
 		FROM paths
 		WHERE name = ?
 		ORDER BY created_at DESC
@@ -427,10 +456,10 @@ func (s *StagingDB) GetPathsByName(name string) ([]PathRecord, error) {
 		var r PathRecord
 		var tracksJSON string
 		var readyTime, closedTime sql.NullTime
-		var sourceType, sourceID sql.NullString
+		var sourceType, sourceID, state sql.NullString
 
 		err := rows.Scan(&r.ID, &r.Name, &r.ConfName, &sourceType, &sourceID,
-			&r.Ready, &readyTime, &closedTime, &tracksJSON,
+			&r.Ready, &readyTime, &closedTime, &state, &tracksJSON,
 			&r.BytesReceived, &r.BytesSent, &r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			continue
@@ -447,6 +476,9 @@ func (s *StagingDB) GetPathsByName(name string) ([]PathRecord, error) {
 		}
 		if closedTime.Valid {
 			r.ClosedTime = &closedTime.Time
+		}
+		if state.Valid {
+			r.State = state.String
 		}
 		json.Unmarshal([]byte(tracksJSON), &r.Tracks)
 
@@ -548,6 +580,50 @@ func (s *StagingDB) cleanup() {
 		rows, _ := result.RowsAffected()
 		if rows > 0 {
 			s.Log(logger.Debug, "cleaned up %d old connection records", rows)
+		}
+	}
+}
+
+// recoverStaleRecords marks any unclosed connections/paths as timeout on startup
+// This handles the case where the server crashed and connections weren't properly closed
+func (s *StagingDB) recoverStaleRecords() {
+	now := time.Now()
+
+	// Recover stale connections (those without closedTime that are in streaming state)
+	// Only recover connections from publishers (not external sources)
+	result, err := s.db.Exec(`
+		UPDATE connections
+		SET state = ?, closed_time = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE closed_time IS NULL AND state IN ('streaming', 'publish', 'read')
+	`, StateTimeout, now)
+	if err != nil {
+		s.Log(logger.Error, "failed to recover stale connections: %v", err)
+	} else {
+		rows, _ := result.RowsAffected()
+		if rows > 0 {
+			s.Log(logger.Warn, "recovered %d stale connections (marked as timeout)", rows)
+		}
+	}
+
+	// Recover stale paths from publisher sources only
+	// Source types from publishers: rtmpConn, rtmpsConn, webRTCSession, rtspSession, srtConn
+	// Do NOT recover paths from external sources like: rtspSource, rtmpSource, hlsSource, etc.
+	publisherSourceTypes := []string{
+		"rtmpConn", "rtmpsConn", "webRTCSession", "rtspSession", "rtspsSession", "srtConn",
+	}
+	for _, sourceType := range publisherSourceTypes {
+		result, err = s.db.Exec(`
+			UPDATE paths
+			SET state = ?, ready = FALSE, closed_time = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE closed_time IS NULL AND ready = TRUE AND source_type = ?
+		`, StateTimeout, now, sourceType)
+		if err != nil {
+			s.Log(logger.Error, "failed to recover stale paths for %s: %v", sourceType, err)
+		} else {
+			rows, _ := result.RowsAffected()
+			if rows > 0 {
+				s.Log(logger.Warn, "recovered %d stale paths from %s (marked as timeout)", rows, sourceType)
+			}
 		}
 	}
 }

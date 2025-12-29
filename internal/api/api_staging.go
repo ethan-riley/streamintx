@@ -181,6 +181,7 @@ func convertPathRecords(records []stagingdb.PathRecord) []*defs.APIStagingPath {
 			Ready:         r.Ready,
 			ReadyTime:     r.ReadyTime,
 			ClosedTime:    r.ClosedTime,
+			State:         r.State,
 			Tracks:        r.Tracks,
 			BytesReceived: r.BytesReceived,
 			BytesSent:     r.BytesSent,

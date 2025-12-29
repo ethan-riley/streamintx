@@ -414,6 +414,7 @@ type APIStagingPath struct {
 	Ready         bool       `json:"ready"`
 	ReadyTime     *time.Time `json:"readyTime"`
 	ClosedTime    *time.Time `json:"closedTime"`
+	State         string     `json:"state"` // streaming, published, idle, timeout
 	Tracks        []string   `json:"tracks"`
 	BytesReceived uint64     `json:"bytesReceived"`
 	BytesSent     uint64     `json:"bytesSent"`
