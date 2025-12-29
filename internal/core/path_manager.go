@@ -61,6 +61,12 @@ type pathSetHLSServerReq struct {
 	res chan pathSetHLSServerRes
 }
 
+type pathNotReadyReq struct {
+	pa            *path
+	bytesReceived uint64
+	bytesSent     uint64
+}
+
 type pathData struct {
 	path            *path
 	ready           bool
@@ -98,7 +104,7 @@ type pathManager struct {
 	chSetHLSServer chan pathSetHLSServerReq
 	chClosePath    chan *path
 	chPathReady    chan *path
-	chPathNotReady chan *path
+	chPathNotReady chan pathNotReadyReq
 	chFindPathConf chan defs.PathFindPathConfReq
 	chDescribe     chan defs.PathDescribeReq
 	chAddReader    chan defs.PathAddReaderReq
@@ -117,7 +123,7 @@ func (pm *pathManager) initialize() {
 	pm.chSetHLSServer = make(chan pathSetHLSServerReq)
 	pm.chClosePath = make(chan *path)
 	pm.chPathReady = make(chan *path)
-	pm.chPathNotReady = make(chan *path)
+	pm.chPathNotReady = make(chan pathNotReadyReq)
 	pm.chFindPathConf = make(chan defs.PathFindPathConfReq)
 	pm.chDescribe = make(chan defs.PathDescribeReq)
 	pm.chAddReader = make(chan defs.PathAddReaderReq)
@@ -176,8 +182,8 @@ outer:
 		case pa := <-pm.chPathReady:
 			pm.doPathReady(pa)
 
-		case pa := <-pm.chPathNotReady:
-			pm.doPathNotReady(pa)
+		case req := <-pm.chPathNotReady:
+			pm.doPathNotReady(req)
 
 		case req := <-pm.chFindPathConf:
 			pm.doFindPathConf(req)
@@ -330,21 +336,16 @@ func (pm *pathManager) doPathReady(pa *path) {
 	}
 }
 
-func (pm *pathManager) doPathNotReady(pa *path) {
+func (pm *pathManager) doPathNotReady(req pathNotReadyReq) {
+	pa := req.pa
 	pd, ok := pm.paths[pa.name]
 	if !ok || pd.path != pa {
 		return
 	}
 
-	// Record path closed event in staging database
+	// Record path closed event in staging database using pre-captured stats
 	if pm.stagingDB != nil && pd.stagingDBPathID > 0 {
-		bytesReceived := uint64(0)
-		bytesSent := uint64(0)
-		if pa.stream != nil {
-			bytesReceived = pa.stream.BytesReceived()
-			bytesSent = pa.stream.BytesSent()
-		}
-		pm.stagingDB.RecordPathClosed(pd.stagingDBPathID, time.Now(), bytesReceived, bytesSent)
+		pm.stagingDB.RecordPathClosed(pd.stagingDBPathID, time.Now(), req.bytesReceived, req.bytesSent)
 		pm.paths[pa.name].stagingDBPathID = 0
 	}
 
@@ -517,9 +518,9 @@ func (pm *pathManager) pathReady(pa *path) {
 }
 
 // pathNotReady is called by path.
-func (pm *pathManager) pathNotReady(pa *path) {
+func (pm *pathManager) pathNotReady(pa *path, bytesReceived, bytesSent uint64) {
 	select {
-	case pm.chPathNotReady <- pa:
+	case pm.chPathNotReady <- pathNotReadyReq{pa: pa, bytesReceived: bytesReceived, bytesSent: bytesSent}:
 	case <-pm.ctx.Done():
 	case <-pa.ctx.Done(): // in case pathManager is blocked by path.wait()
 	}
