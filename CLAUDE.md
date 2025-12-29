@@ -108,9 +108,35 @@ A SQLite-based staging database has been added to log all stream information for
 - Connection ID, type (rtmp/rtmps)
 - Created time, closed time
 - Remote address
-- State changes (idle → read/publish)
+- State (idle, streaming, published, timeout)
 - Path name and query parameters
+- Authenticated user (extracted from query params `?user=xxx`)
 - Bytes received/sent statistics
+
+### State Management
+
+The staging database tracks 4 states for paths and connections:
+
+| State | Description |
+|-------|-------------|
+| `idle` | Connection opened but not yet publishing/reading (onDemand waiting) |
+| `streaming` | Actively transmitting (no closedTime) |
+| `published` | Completed normally by client (has closedTime) |
+| `timeout` | Connection lost unexpectedly (crash/disconnect) |
+
+### Crash Recovery
+
+On startup, the staging database automatically recovers stale records:
+- Connections in `streaming`/`publish`/`read` state without closedTime → marked as `timeout`
+- Paths from publisher sources without closedTime → marked as `timeout`
+- Only recovers publisher sources: `rtmpConn`, `rtmpsConn`, `webRTCSession`, `rtspSession`, `srtConn`
+- Does NOT recover external sources (rtspSource, hlsSource, etc.)
+
+### User Tracking
+
+The authenticated user is extracted from RTMP query parameters:
+- URL format: `rtmp://host/path?user=xxx&pass=xxx` → user field = "xxx"
+- Note: URL userinfo format (`rtmp://user:pass@host/path`) is NOT supported because RTMP clients strip credentials before transmission
 
 ### Configuration Options
 ```yaml
@@ -218,11 +244,39 @@ Response:
       "ready": false,
       "readyTime": "2025-12-29T14:55:49.156291745Z",
       "closedTime": "2025-12-29T15:30:22.123456789Z",
+      "state": "published",
       "tracks": ["H264"],
       "bytesReceived": 331969114,
       "bytesSent": 0,
       "createdAt": "2025-12-29T14:55:49Z",
       "updatedAt": "2025-12-29T15:30:22Z"
+    }
+  ]
+}
+```
+
+### Sample Response - Connection with user
+
+```json
+{
+  "itemCount": 1,
+  "pageCount": 1,
+  "items": [
+    {
+      "id": 2,
+      "connId": "6b80e024-02e4-4266-ad55-dec7838e953e",
+      "connType": "rtmp",
+      "created": "2025-12-29T17:12:58.75865419-03:00",
+      "closedTime": "2025-12-29T17:15:30.123456789-03:00",
+      "remoteAddr": "192.168.1.111:58703",
+      "state": "published",
+      "path": "testuser_stream",
+      "query": "user=c4user&pass=xxx",
+      "user": "c4user",
+      "bytesReceived": 17662199,
+      "bytesSent": 3467,
+      "createdAt": "2025-12-29T20:12:58Z",
+      "updatedAt": "2025-12-29T20:15:30Z"
     }
   ]
 }
