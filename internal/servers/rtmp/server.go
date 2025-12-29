@@ -19,6 +19,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/restrictnetwork"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 	"github.com/bluenviron/mediamtx/internal/stream"
 )
 
@@ -86,6 +87,7 @@ type Server struct {
 	ExternalCmdPool     *externalcmd.Pool
 	Metrics             serverMetrics
 	PathManager         serverPathManager
+	StagingDB           *stagingdb.StagingDB
 	Parent              serverParent
 
 	ctx       context.Context
@@ -217,6 +219,7 @@ outer:
 				nconn:               nconn,
 				externalCmdPool:     s.ExternalCmdPool,
 				pathManager:         s.PathManager,
+				stagingDB:           s.StagingDB,
 				parent:              s,
 			}
 			c.initialize()

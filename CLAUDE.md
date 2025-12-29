@@ -93,9 +93,145 @@ The following items were NOT changed and may need updating if you want a complet
 
 7. **GitHub workflow files**: `.github/workflows/`
 
+## Staging Database Feature
+
+A SQLite-based staging database has been added to log all stream information for the last 72 hours (configurable). This feature tracks:
+
+### Path Events
+- Path name, config name, source type, source ID
+- Ready time (when stream starts)
+- Closed time (when stream ends)
+- Tracks/codecs information
+- Bytes received/sent statistics
+
+### Connection Events (RTMP/RTMPS)
+- Connection ID, type (rtmp/rtmps)
+- Created time, closed time
+- Remote address
+- State changes (idle → read/publish)
+- Path name and query parameters
+- Bytes received/sent statistics
+
+### Configuration Options
+```yaml
+# Enable the staging database
+stagingDB: yes
+# Path to the SQLite database file
+stagingDBPath: streamintx_staging.db
+# How long to retain data (default: 72 hours)
+stagingDBRetentionPeriod: 72h
+```
+
+### New Files
+- `internal/stagingdb/stagingdb.go` - SQLite database module with automatic cleanup
+
+### Modified Files
+- `internal/conf/conf.go` - Added configuration options
+- `internal/core/core.go` - Added stagingDB initialization and lifecycle
+- `internal/core/path_manager.go` - Hook path ready/not ready events
+- `internal/servers/rtmp/server.go` - Pass stagingDB to connections
+- `internal/servers/rtmp/conn.go` - Record connection lifecycle events
+
+### Dependencies
+- Added `github.com/mattn/go-sqlite3` (CGO-based SQLite driver)
+
+### API Endpoints (Staging Database)
+
+The following new API endpoints are available when the staging database is enabled:
+
+#### GET /v3/staging/paths/list
+List all path records from the staging database.
+
+Query parameters:
+- `hours` (optional, default: 72) - Number of hours to look back
+- `page` (optional) - Page number for pagination
+- `itemsPerPage` (optional) - Items per page
+
+Example:
+```bash
+curl localhost:9997/v3/staging/paths/list | jq
+curl "localhost:9997/v3/staging/paths/list?hours=24" | jq
+```
+
+#### GET /v3/staging/paths/get/{name}
+Get all records for a specific path name.
+
+Example:
+```bash
+curl localhost:9997/v3/staging/paths/get/C4_test_01 | jq
+```
+
+#### GET /v3/staging/connections/list
+List all connection records from the staging database.
+
+Query parameters:
+- `hours` (optional, default: 72) - Number of hours to look back
+- `path` (optional) - Filter by path name
+- `page` (optional) - Page number for pagination
+- `itemsPerPage` (optional) - Items per page
+
+Example:
+```bash
+curl localhost:9997/v3/staging/connections/list | jq
+curl "localhost:9997/v3/staging/connections/list?path=C4_test_01" | jq
+```
+
+#### GET /v3/staging/connections/get/{path}
+Get all connections for a specific path.
+
+Example:
+```bash
+curl localhost:9997/v3/staging/connections/get/C4_test_01 | jq
+```
+
+#### GET /v3/staging/stats
+Get statistics about the staging database.
+
+Example:
+```bash
+curl localhost:9997/v3/staging/stats | jq
+```
+
+Response:
+```json
+{
+  "totalPaths": 150,
+  "activePaths": 2,
+  "totalConnections": 200,
+  "activeConnections": 3
+}
+```
+
+### Sample Response - Path with closedTime
+
+```json
+{
+  "itemCount": 1,
+  "pageCount": 1,
+  "items": [
+    {
+      "id": 1,
+      "name": "C4_test_01",
+      "confName": "~^C4",
+      "sourceType": "rtmpConn",
+      "sourceId": "0afd7da4-ac01-4a49-8f08-a5290b0e2041",
+      "ready": false,
+      "readyTime": "2025-12-29T14:55:49.156291745Z",
+      "closedTime": "2025-12-29T15:30:22.123456789Z",
+      "tracks": ["H264"],
+      "bytesReceived": 331969114,
+      "bytesSent": 0,
+      "createdAt": "2025-12-29T14:55:49Z",
+      "updatedAt": "2025-12-29T15:30:22Z"
+    }
+  ]
+}
+```
+
 ## Notes
 
 - The upgrade feature (`--upgrade` flag) now points to `github.com/bluenviron/streamintx` - update this URL when you create your own repository
 - The binary will be named `streamintx` when compiled
 - Config file should be named `streamintx.yml`
 - Log file defaults to `streamintx.log`
+- Staging database file defaults to `streamintx_staging.db`

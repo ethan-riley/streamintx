@@ -17,6 +17,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/protocols/httpp"
 	"github.com/bluenviron/mediamtx/internal/recordstore"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 )
 
 func interfaceIsEmpty(i any) bool {
@@ -97,6 +98,7 @@ type API struct {
 	HLSServer      defs.APIHLSServer
 	WebRTCServer   defs.APIWebRTCServer
 	SRTServer      defs.APISRTServer
+	StagingDB      *stagingdb.StagingDB
 	Parent         apiParent
 
 	httpServer *httpp.Server
@@ -181,6 +183,15 @@ func (a *API) Initialize() error {
 	group.GET("/recordings/list", a.onRecordingsList)
 	group.GET("/recordings/get/*name", a.onRecordingsGet)
 	group.DELETE("/recordings/deletesegment", a.onRecordingDeleteSegment)
+
+	// Staging database endpoints
+	if a.StagingDB != nil {
+		group.GET("/staging/paths/list", a.onStagingPathsList)
+		group.GET("/staging/paths/get/*name", a.onStagingPathsGet)
+		group.GET("/staging/connections/list", a.onStagingConnectionsList)
+		group.GET("/staging/connections/get/:id", a.onStagingConnectionsGet)
+		group.GET("/staging/stats", a.onStagingStats)
+	}
 
 	a.httpServer = &httpp.Server{
 		Address:      a.Address,

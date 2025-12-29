@@ -299,6 +299,11 @@ type Conf struct {
 	SRT        bool   `json:"srt"`
 	SRTAddress string `json:"srtAddress"`
 
+	// Staging database
+	StagingDB                bool     `json:"stagingDB"`
+	StagingDBPath            string   `json:"stagingDBPath"`
+	StagingDBRetentionPeriod Duration `json:"stagingDBRetentionPeriod"`
+
 	// Record (deprecated)
 	Record                *bool         `json:"record,omitempty"`                // deprecated
 	RecordPath            *string       `json:"recordPath,omitempty"`            // deprecated
@@ -428,6 +433,11 @@ func (conf *Conf) setDefaults() {
 	// SRT server
 	conf.SRT = true
 	conf.SRTAddress = ":8890"
+
+	// Staging database
+	conf.StagingDB = true
+	conf.StagingDBPath = "streamintx_staging.db"
+	conf.StagingDBRetentionPeriod = 72 * Duration(time.Hour)
 
 	conf.PathDefaults.setDefaults()
 }

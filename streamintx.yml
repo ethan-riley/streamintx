@@ -147,7 +147,7 @@ authJWTInHTTPQuery: true
 # Global settings -> Control API
 
 # Enable controlling the server through the Control API.
-api: no
+api: yes
 # Address of the Control API listener.
 apiAddress: :9997
 # Enable TLS/HTTPS on the Control API server.
@@ -238,6 +238,17 @@ playbackAllowOrigins: ['*']
 # If the server receives a request from one of these entries, IP in logs
 # will be taken from the X-Forwarded-For header.
 playbackTrustedProxies: []
+
+###############################################
+# Global settings -> Staging database
+
+# Enable the staging database to log all stream information.
+# The database stores path and connection data for the configured retention period.
+stagingDB: yes
+# Path to the SQLite database file.
+stagingDBPath: streamintx_staging.db
+# How long to retain data in the staging database (default: 72 hours).
+stagingDBRetentionPeriod: 72h
 
 ###############################################
 # Global settings -> RTSP server

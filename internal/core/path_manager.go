@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/bluenviron/mediamtx/internal/auth"
 	"github.com/bluenviron/mediamtx/internal/conf"
@@ -13,6 +14,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
 	"github.com/bluenviron/mediamtx/internal/servers/hls"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 	"github.com/bluenviron/mediamtx/internal/stream"
 )
 
@@ -60,9 +62,10 @@ type pathSetHLSServerReq struct {
 }
 
 type pathData struct {
-	path     *path
-	ready    bool
-	confName string
+	path            *path
+	ready           bool
+	confName        string
+	stagingDBPathID int64 // ID in the staging database for tracking
 }
 
 type pathManagerParent interface {
@@ -81,6 +84,7 @@ type pathManager struct {
 	pathConfs         map[string]*conf.Path
 	externalCmdPool   *externalcmd.Pool
 	metrics           *metrics.Metrics
+	stagingDB         *stagingdb.StagingDB
 	parent            pathManagerParent
 
 	ctx       context.Context
@@ -294,11 +298,32 @@ func (pm *pathManager) doClosePath(pa *path) {
 }
 
 func (pm *pathManager) doPathReady(pa *path) {
-	if pd, ok := pm.paths[pa.name]; !ok || pd.path != pa {
+	pd, ok := pm.paths[pa.name]
+	if !ok || pd.path != pa {
 		return
 	}
 
 	pm.paths[pa.name].ready = true
+
+	// Record path ready event in staging database
+	if pm.stagingDB != nil && pa.source != nil {
+		sourceDesc := pa.source.APISourceDescribe()
+		tracks := []string{}
+		if pa.stream != nil && pa.stream.Desc != nil {
+			tracks = defs.MediasToCodecs(pa.stream.Desc.Medias)
+		}
+		id, err := pm.stagingDB.RecordPathReady(
+			pa.name,
+			pa.conf.Name,
+			sourceDesc.Type,
+			sourceDesc.ID,
+			pa.readyTime,
+			tracks,
+		)
+		if err == nil {
+			pm.paths[pa.name].stagingDBPathID = id
+		}
+	}
 
 	if pm.hlsServer != nil {
 		pm.hlsServer.PathReady(pa)
@@ -306,8 +331,21 @@ func (pm *pathManager) doPathReady(pa *path) {
 }
 
 func (pm *pathManager) doPathNotReady(pa *path) {
-	if pd, ok := pm.paths[pa.name]; !ok || pd.path != pa {
+	pd, ok := pm.paths[pa.name]
+	if !ok || pd.path != pa {
 		return
+	}
+
+	// Record path closed event in staging database
+	if pm.stagingDB != nil && pd.stagingDBPathID > 0 {
+		bytesReceived := uint64(0)
+		bytesSent := uint64(0)
+		if pa.stream != nil {
+			bytesReceived = pa.stream.BytesReceived()
+			bytesSent = pa.stream.BytesSent()
+		}
+		pm.stagingDB.RecordPathClosed(pd.stagingDBPathID, time.Now(), bytesReceived, bytesSent)
+		pm.paths[pa.name].stagingDBPathID = 0
 	}
 
 	pm.paths[pa.name].ready = false

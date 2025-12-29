@@ -35,6 +35,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/servers/rtsp"
 	"github.com/bluenviron/mediamtx/internal/servers/srt"
 	"github.com/bluenviron/mediamtx/internal/servers/webrtc"
+	"github.com/bluenviron/mediamtx/internal/stagingdb"
 )
 
 //go:generate go run ./versiongetter
@@ -95,6 +96,7 @@ type Core struct {
 	pprof           *pprof.PPROF
 	recordCleaner   *recordcleaner.Cleaner
 	playbackServer  *playback.Server
+	stagingDB       *stagingdb.StagingDB
 	pathManager     *pathManager
 	rtspServer      *rtsp.Server
 	rtspsServer     *rtsp.Server
@@ -400,6 +402,19 @@ func (p *Core) createResources(initial bool) error {
 		p.playbackServer = i
 	}
 
+	if p.conf.StagingDB && p.stagingDB == nil {
+		i := &stagingdb.StagingDB{
+			DBPath:          p.conf.StagingDBPath,
+			RetentionPeriod: time.Duration(p.conf.StagingDBRetentionPeriod),
+			Parent:          p,
+		}
+		err = i.Initialize()
+		if err != nil {
+			return err
+		}
+		p.stagingDB = i
+	}
+
 	if p.pathManager == nil {
 		rtpMaxPayloadSize := getRTPMaxPayloadSize(p.conf.UDPMaxPayloadSize, p.conf.RTSPEncryption)
 
@@ -415,6 +430,7 @@ func (p *Core) createResources(initial bool) error {
 			pathConfs:         p.conf.Paths,
 			externalCmdPool:   p.externalCmdPool,
 			metrics:           p.metrics,
+			stagingDB:         p.stagingDB,
 			parent:            p,
 		}
 		p.pathManager.initialize()
@@ -530,6 +546,7 @@ func (p *Core) createResources(initial bool) error {
 			ExternalCmdPool:     p.externalCmdPool,
 			Metrics:             p.metrics,
 			PathManager:         p.pathManager,
+			StagingDB:           p.stagingDB,
 			Parent:              p,
 		}
 		err = i.Initialize()
@@ -557,6 +574,7 @@ func (p *Core) createResources(initial bool) error {
 			ExternalCmdPool:     p.externalCmdPool,
 			Metrics:             p.metrics,
 			PathManager:         p.pathManager,
+			StagingDB:           p.stagingDB,
 			Parent:              p,
 		}
 		err = i.Initialize()
@@ -675,6 +693,7 @@ func (p *Core) createResources(initial bool) error {
 			HLSServer:      p.hlsServer,
 			WebRTCServer:   p.webRTCServer,
 			SRTServer:      p.srtServer,
+			StagingDB:      p.stagingDB,
 			Parent:         p,
 		}
 		err = i.Initialize()
@@ -767,6 +786,12 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		p.playbackServer.ReloadPathConfs(newConf.Paths)
 	}
 
+	closeStagingDB := newConf == nil ||
+		newConf.StagingDB != p.conf.StagingDB ||
+		newConf.StagingDBPath != p.conf.StagingDBPath ||
+		newConf.StagingDBRetentionPeriod != p.conf.StagingDBRetentionPeriod ||
+		closeLogger
+
 	closePathManager := newConf == nil ||
 		newConf.LogLevel != p.conf.LogLevel ||
 		newConf.RTSPAddress != p.conf.RTSPAddress ||
@@ -778,6 +803,7 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		newConf.RTSPEncryption != p.conf.RTSPEncryption ||
 		closeMetrics ||
 		closeAuthManager ||
+		closeStagingDB ||
 		closeLogger
 	if !closePathManager && !reflect.DeepEqual(newConf.Paths, p.conf.Paths) {
 		p.pathManager.ReloadPathConfs(newConf.Paths)
@@ -989,6 +1015,11 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 	if closePathManager && p.pathManager != nil {
 		p.pathManager.close()
 		p.pathManager = nil
+	}
+
+	if closeStagingDB && p.stagingDB != nil {
+		p.stagingDB.Close()
+		p.stagingDB = nil
 	}
 
 	if closePlaybackServer && p.playbackServer != nil {
