@@ -216,6 +216,9 @@ func (c *conn) runRead() error {
 		if user == "" && c.rconn.URL.User != nil {
 			user = c.rconn.URL.User.Username()
 		}
+		// Debug: log what URL info we received
+		c.Log(logger.Debug, "staging: URL=%s, User=%v, Query=%s, ExtractedUser=%s",
+			c.rconn.URL.String(), c.rconn.URL.User, c.rconn.URL.RawQuery, user)
 		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStateRead), pathName, c.rconn.URL.RawQuery, user)
 	}
 
@@ -316,6 +319,9 @@ func (c *conn) runPublish() error {
 		if user == "" && c.rconn.URL.User != nil {
 			user = c.rconn.URL.User.Username()
 		}
+		// Debug: log what URL info we received
+		c.Log(logger.Debug, "staging: URL=%s, User=%v, Query=%s, ExtractedUser=%s",
+			c.rconn.URL.String(), c.rconn.URL.User, c.rconn.URL.RawQuery, user)
 		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStatePublish), pathName, c.rconn.URL.RawQuery, user)
 	}
 
