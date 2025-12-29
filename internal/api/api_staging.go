@@ -29,7 +29,12 @@ func (a *API) onStagingPathsList(ctx *gin.Context) {
 	}
 
 	data.ItemCount = len(data.Items)
-	paginate(&data.Items, &data.PageCount, ctx.Query("page"), ctx.Query("itemsPerPage"))
+	pageCount, err := paginate(&data.Items, ctx.Query("itemsPerPage"), ctx.Query("page"))
+	if err != nil {
+		a.writeError(ctx, http.StatusBadRequest, err)
+		return
+	}
+	data.PageCount = pageCount
 
 	ctx.JSON(http.StatusOK, data)
 }
@@ -52,7 +57,12 @@ func (a *API) onStagingPathsGet(ctx *gin.Context) {
 	}
 
 	data.ItemCount = len(data.Items)
-	paginate(&data.Items, &data.PageCount, ctx.Query("page"), ctx.Query("itemsPerPage"))
+	pageCount, err := paginate(&data.Items, ctx.Query("itemsPerPage"), ctx.Query("page"))
+	if err != nil {
+		a.writeError(ctx, http.StatusBadRequest, err)
+		return
+	}
+	data.PageCount = pageCount
 
 	ctx.JSON(http.StatusOK, data)
 }
@@ -84,7 +94,12 @@ func (a *API) onStagingConnectionsList(ctx *gin.Context) {
 	}
 
 	data.ItemCount = len(data.Items)
-	paginate(&data.Items, &data.PageCount, ctx.Query("page"), ctx.Query("itemsPerPage"))
+	pageCount, err := paginate(&data.Items, ctx.Query("itemsPerPage"), ctx.Query("page"))
+	if err != nil {
+		a.writeError(ctx, http.StatusBadRequest, err)
+		return
+	}
+	data.PageCount = pageCount
 
 	ctx.JSON(http.StatusOK, data)
 }
@@ -104,7 +119,12 @@ func (a *API) onStagingConnectionsGet(ctx *gin.Context) {
 	}
 
 	data.ItemCount = len(data.Items)
-	paginate(&data.Items, &data.PageCount, ctx.Query("page"), ctx.Query("itemsPerPage"))
+	pageCount, err := paginate(&data.Items, ctx.Query("itemsPerPage"), ctx.Query("page"))
+	if err != nil {
+		a.writeError(ctx, http.StatusBadRequest, err)
+		return
+	}
+	data.PageCount = pageCount
 
 	ctx.JSON(http.StatusOK, data)
 }
