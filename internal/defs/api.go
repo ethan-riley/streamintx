@@ -439,6 +439,7 @@ type APIStagingConnection struct {
 	State         string     `json:"state"`
 	Path          string     `json:"path"`
 	Query         string     `json:"query"`
+	User          string     `json:"user"`
 	BytesReceived uint64     `json:"bytesReceived"`
 	BytesSent     uint64     `json:"bytesSent"`
 	CreatedAt     time.Time  `json:"createdAt"`

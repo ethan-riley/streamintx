@@ -211,7 +211,12 @@ func (c *conn) runRead() error {
 
 	// Record state change in staging database
 	if c.stagingDB != nil && c.stagingDBConnID > 0 {
-		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStateRead), pathName, c.rconn.URL.RawQuery)
+		// Extract user from query params or URL userinfo
+		user := query.Get("user")
+		if user == "" && c.rconn.URL.User != nil {
+			user = c.rconn.URL.User.Username()
+		}
+		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStateRead), pathName, c.rconn.URL.RawQuery, user)
 	}
 
 	r := &stream.Reader{Parent: c}
@@ -306,7 +311,12 @@ func (c *conn) runPublish() error {
 
 	// Record state change in staging database
 	if c.stagingDB != nil && c.stagingDBConnID > 0 {
-		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStatePublish), pathName, c.rconn.URL.RawQuery)
+		// Extract user from query params or URL userinfo
+		user := query.Get("user")
+		if user == "" && c.rconn.URL.User != nil {
+			user = c.rconn.URL.User.Username()
+		}
+		c.stagingDB.RecordConnectionStateChange(c.stagingDBConnID, string(defs.APIRTMPConnStatePublish), pathName, c.rconn.URL.RawQuery, user)
 	}
 
 	c.nconn.SetWriteDeadline(time.Time{})

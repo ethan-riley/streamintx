@@ -44,6 +44,7 @@ type ConnectionRecord struct {
 	State         string     `json:"state"` // idle, read, publish
 	PathName      string     `json:"path"`
 	Query         string     `json:"query"`
+	User          string     `json:"user"` // authenticated user
 	BytesReceived uint64     `json:"bytesReceived"`
 	BytesSent     uint64     `json:"bytesSent"`
 	CreatedAt     time.Time  `json:"createdAt"`
@@ -149,6 +150,7 @@ func (s *StagingDB) createTables() error {
 			state TEXT DEFAULT 'idle',
 			path_name TEXT,
 			query TEXT,
+			user TEXT,
 			bytes_received INTEGER DEFAULT 0,
 			bytes_sent INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -158,6 +160,9 @@ func (s *StagingDB) createTables() error {
 	if err != nil {
 		return err
 	}
+
+	// Add user column if it doesn't exist (for existing databases)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN user TEXT`)
 
 	// Create indexes for faster queries
 	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_paths_name ON paths(name)`)
@@ -261,21 +266,21 @@ func (s *StagingDB) RecordConnectionOpened(connID uuid.UUID, connType string, cr
 }
 
 // RecordConnectionStateChange records when a connection changes state
-func (s *StagingDB) RecordConnectionStateChange(id int64, state, pathName, query string) error {
+func (s *StagingDB) RecordConnectionStateChange(id int64, state, pathName, query, user string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	_, err := s.db.Exec(`
 		UPDATE connections
-		SET state = ?, path_name = ?, query = ?, updated_at = CURRENT_TIMESTAMP
+		SET state = ?, path_name = ?, query = ?, user = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, state, pathName, query, id)
+	`, state, pathName, query, user, id)
 	if err != nil {
 		s.Log(logger.Error, "failed to record connection state change: %v", err)
 		return err
 	}
 
-	s.Log(logger.Debug, "recorded connection state change: id=%d, state=%s, path=%s", id, state, pathName)
+	s.Log(logger.Debug, "recorded connection state change: id=%d, state=%s, path=%s, user=%s", id, state, pathName, user)
 	return nil
 }
 
@@ -356,7 +361,7 @@ func (s *StagingDB) GetRecentConnections(hours int) ([]ConnectionRecord, error) 
 
 	rows, err := s.db.Query(`
 		SELECT id, conn_id, conn_type, created, closed_time, remote_addr, state,
-		       path_name, query, bytes_received, bytes_sent, created_at, updated_at
+		       path_name, query, user, bytes_received, bytes_sent, created_at, updated_at
 		FROM connections
 		WHERE created_at >= datetime('now', ?)
 		ORDER BY created_at DESC
@@ -371,10 +376,10 @@ func (s *StagingDB) GetRecentConnections(hours int) ([]ConnectionRecord, error) 
 		var r ConnectionRecord
 		var connIDStr string
 		var closedTime sql.NullTime
-		var pathName, query sql.NullString
+		var pathName, query, user sql.NullString
 
 		err := rows.Scan(&r.ID, &connIDStr, &r.ConnType, &r.Created, &closedTime,
-			&r.RemoteAddr, &r.State, &pathName, &query,
+			&r.RemoteAddr, &r.State, &pathName, &query, &user,
 			&r.BytesReceived, &r.BytesSent, &r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			continue
@@ -389,6 +394,9 @@ func (s *StagingDB) GetRecentConnections(hours int) ([]ConnectionRecord, error) 
 		}
 		if query.Valid {
 			r.Query = query.String
+		}
+		if user.Valid {
+			r.User = user.String
 		}
 
 		records = append(records, r)
@@ -455,7 +463,7 @@ func (s *StagingDB) GetConnectionsByPath(pathName string) ([]ConnectionRecord, e
 
 	rows, err := s.db.Query(`
 		SELECT id, conn_id, conn_type, created, closed_time, remote_addr, state,
-		       path_name, query, bytes_received, bytes_sent, created_at, updated_at
+		       path_name, query, user, bytes_received, bytes_sent, created_at, updated_at
 		FROM connections
 		WHERE path_name = ?
 		ORDER BY created_at DESC
@@ -470,10 +478,10 @@ func (s *StagingDB) GetConnectionsByPath(pathName string) ([]ConnectionRecord, e
 		var r ConnectionRecord
 		var connIDStr string
 		var closedTime sql.NullTime
-		var pathNameN, query sql.NullString
+		var pathNameN, query, user sql.NullString
 
 		err := rows.Scan(&r.ID, &connIDStr, &r.ConnType, &r.Created, &closedTime,
-			&r.RemoteAddr, &r.State, &pathNameN, &query,
+			&r.RemoteAddr, &r.State, &pathNameN, &query, &user,
 			&r.BytesReceived, &r.BytesSent, &r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			continue
@@ -488,6 +496,9 @@ func (s *StagingDB) GetConnectionsByPath(pathName string) ([]ConnectionRecord, e
 		}
 		if query.Valid {
 			r.Query = query.String
+		}
+		if user.Valid {
+			r.User = user.String
 		}
 
 		records = append(records, r)

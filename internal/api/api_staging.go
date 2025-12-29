@@ -204,6 +204,7 @@ func convertConnectionRecords(records []stagingdb.ConnectionRecord) []*defs.APIS
 			State:         r.State,
 			Path:          r.PathName,
 			Query:         r.Query,
+			User:          r.User,
 			BytesReceived: r.BytesReceived,
 			BytesSent:     r.BytesSent,
 			CreatedAt:     r.CreatedAt,
