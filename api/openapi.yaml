@@ -2,8 +2,8 @@ openapi: 3.0.0
 
 info:
   version: 1.0.0
-  title: MediaMTX API
-  description: API of MediaMTX, a server and proxy that supports various protocols.
+  title: StreaminTX API
+  description: API of StreaminTX, a real-time media server and proxy that supports various streaming protocols. Based on MediaMTX.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -1152,6 +1152,127 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WebRTCSession'
+
+    StagingPathRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        confName:
+          type: string
+        sourceType:
+          type: string
+        sourceId:
+          type: string
+        ready:
+          type: boolean
+        readyTime:
+          type: string
+          nullable: true
+        closedTime:
+          type: string
+          nullable: true
+        state:
+          type: string
+          enum: [idle, streaming, published, timeout]
+        tracks:
+          type: array
+          items:
+            type: string
+        bytesReceived:
+          type: integer
+          format: int64
+        bytesSent:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    StagingPathList:
+      type: object
+      properties:
+        pageCount:
+          type: integer
+          format: int64
+        itemCount:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StagingPathRecord'
+
+    StagingConnectionRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        connId:
+          type: string
+        connType:
+          type: string
+        created:
+          type: string
+        closedTime:
+          type: string
+          nullable: true
+        remoteAddr:
+          type: string
+        state:
+          type: string
+          enum: [idle, streaming, published, timeout]
+        path:
+          type: string
+        query:
+          type: string
+        user:
+          type: string
+        bytesReceived:
+          type: integer
+          format: int64
+        bytesSent:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    StagingConnectionList:
+      type: object
+      properties:
+        pageCount:
+          type: integer
+          format: int64
+        itemCount:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StagingConnectionRecord'
+
+    StagingStats:
+      type: object
+      properties:
+        totalPaths:
+          type: integer
+          format: int64
+        activePaths:
+          type: integer
+          format: int64
+        totalConnections:
+          type: integer
+          format: int64
+        activeConnections:
+          type: integer
+          format: int64
 
 paths:
 
@@ -2685,6 +2806,199 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          description: server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v3/staging/paths/list:
+    get:
+      operationId: stagingPathsList
+      tags: [Staging Database]
+      summary: returns all path records from the staging database.
+      description: Returns historical path records for the specified time period.
+      parameters:
+      - name: hours
+        in: query
+        description: number of hours to look back (default 72).
+        schema:
+          type: integer
+          default: 72
+      - name: page
+        in: query
+        description: page number.
+        schema:
+          type: integer
+          default: 0
+      - name: itemsPerPage
+        in: query
+        description: items per page.
+        schema:
+          type: integer
+          default: 100
+      responses:
+        '200':
+          description: the request was successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingPathList'
+        '400':
+          description: invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v3/staging/paths/get/{name}:
+    get:
+      operationId: stagingPathsGet
+      tags: [Staging Database]
+      summary: returns all records for a specific path name.
+      description: Returns all historical records for a given path name.
+      parameters:
+      - name: name
+        in: path
+        required: true
+        description: name of the path.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: the request was successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingPathList'
+        '400':
+          description: invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: path not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v3/staging/connections/list:
+    get:
+      operationId: stagingConnectionsList
+      tags: [Staging Database]
+      summary: returns all connection records from the staging database.
+      description: Returns historical connection records for the specified time period.
+      parameters:
+      - name: hours
+        in: query
+        description: number of hours to look back (default 72).
+        schema:
+          type: integer
+          default: 72
+      - name: path
+        in: query
+        description: filter by path name.
+        schema:
+          type: string
+      - name: page
+        in: query
+        description: page number.
+        schema:
+          type: integer
+          default: 0
+      - name: itemsPerPage
+        in: query
+        description: items per page.
+        schema:
+          type: integer
+          default: 100
+      responses:
+        '200':
+          description: the request was successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingConnectionList'
+        '400':
+          description: invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v3/staging/connections/get/{path}:
+    get:
+      operationId: stagingConnectionsGet
+      tags: [Staging Database]
+      summary: returns all connections for a specific path.
+      description: Returns all historical connection records for a given path.
+      parameters:
+      - name: path
+        in: path
+        required: true
+        description: name of the path.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: the request was successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingConnectionList'
+        '400':
+          description: invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: path not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v3/staging/stats:
+    get:
+      operationId: stagingStats
+      tags: [Staging Database]
+      summary: returns statistics about the staging database.
+      description: Returns counts of total and active paths and connections.
+      responses:
+        '200':
+          description: the request was successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingStats'
         '500':
           description: server error.
           content:
